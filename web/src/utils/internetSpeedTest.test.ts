@@ -29,3 +29,24 @@ describe("testInternetSpeed", () => {
     expect(result.download).toBeLessThan(DEFAULT_THRESHOLDS.minDownloadMbps);
   });
 });
+
+describe("testInternetSpeed status", () => {
+  it("marks every check as unmeasured when all requests fail", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const result = await testInternetSpeed();
+    expect(result.status).toBe("unmeasured");
+    expect(result.passed).toBe(false);
+    expect(result.checks).toEqual({ download: "unmeasured", upload: "unmeasured", ping: "unmeasured" });
+  });
+
+  it("treats non-2xx responses as unmeasured, not as a measurement", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("busy", { status: 503 })))
+    );
+    const result = await testInternetSpeed();
+    expect(result.checks.upload).toBe("unmeasured");
+    expect(result.checks.download).toBe("unmeasured");
+    expect(result.status).toBe("unmeasured");
+  });
+});
