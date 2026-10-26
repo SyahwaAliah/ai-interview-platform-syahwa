@@ -233,6 +233,8 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
     const internetStatus = internetResult?.status ?? null;
     const internetNeedsAck = internetStatus !== null && internetStatus !== "pass";
     const canStart = allPassed && (!internetNeedsAck || acknowledged);
+    const internetNotice =
+        internetStatus !== null && internetStatus !== "pass" ? INTERNET_NOTICE[internetStatus] : null;
 
     return (
         <div className="rounded-lg border bg-card overflow-hidden">
@@ -259,11 +261,10 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
             {/* Checklist */}
             <div className="divide-y">
                 {rows.map(({ key, label }) => {
-                    const internetWarn =
-                        key === "internet" && progress.internet === ProctoringState.PASSED && internetNeedsAck;
-                    const notice = internetWarn && internetStatus !== "pass" && internetStatus !== null
-                        ? INTERNET_NOTICE[internetStatus]
-                        : null;
+                    const notice =
+                        key === "internet" && progress.internet === ProctoringState.PASSED
+                            ? internetNotice
+                            : null;
                     return (
                         <div key={key} className="px-4 py-3">
                             <div className="flex items-center justify-between">
