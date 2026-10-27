@@ -21,6 +21,7 @@ import { useAudioPlayback } from "@/hooks/useAudioPlayback";
 import { useAudioWebSocket } from "@/hooks/useAudioWebSocket";
 import { sessionsApi } from "@/services/sessions";
 import HardwareCheck from "@/components/HardwareCheck";
+import { describeStartFailure, type StartFailure } from "@/utils/interviewErrors";
 import { CheckCircle, Mic, MicOff } from "lucide-react";
 import type { CandidateInfo, InterviewState, InterviewSpeaker, TranscriptTurn } from "@/types";
 
@@ -37,6 +38,7 @@ export default function InterviewPage() {
   const reconnectedPromptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectionLostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [micMuted, setMicMuted] = useState(false);
+  const [startFailure, setStartFailure] = useState<StartFailure | null>(null);
   const micMutedRef = useRef(false);
 
   // Fetch candidate info
@@ -48,7 +50,10 @@ export default function InterviewPage() {
         setSessionId(res.data.session_id);
         if (res.data.session_status === "ended") setInterviewState("complete");
       })
-      .catch(() => setInterviewState("complete"));
+      .catch((err) => {
+        setStartFailure(describeStartFailure(err?.response?.status === 404 ? "invalid_link" : undefined));
+        setInterviewState("failed");
+      });
   }, [token]);
 
   const muteRef = useRef<(() => void) | null>(null);
@@ -56,6 +61,11 @@ export default function InterviewPage() {
 
   const handleStateChange = useCallback((state: InterviewState) => {
     setInterviewState(state);
+
+    if (state === "failed") {
+      muteRef.current?.(); // stop sending mic audio once the interview cannot continue
+      return;
+    }
 
     if (state === "draining_audio") {
       // Mute mic, stop sending — wait for audio queue to drain then call audio_complete
@@ -138,6 +148,7 @@ export default function InterviewPage() {
     onStateChange: handleStateChange,
     onSpeakerChange: handleSpeakerChange,
     onReconnected: handleReconnected,
+    onFatalError: (code) => setStartFailure(describeStartFailure(code)),
   });
 
   const { start: startCapture, stop: stopCapture, mute, unmute } = useAudioCapture({
@@ -227,6 +238,26 @@ export default function InterviewPage() {
   }
 
   // ── State F: Complete ───────────────────────────────────────────────────
+  if (interviewState === "failed") {
+    const failure = startFailure ?? describeStartFailure();
+    return (
+      <div role="alert" className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
+        <div className="text-4xl">⚠️</div>
+        <h2 className="text-xl font-semibold">{failure.title}</h2>
+        <p className="text-sm text-muted-foreground">{failure.message}</p>
+        {failure.canRetry && (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
+            Try again
+          </button>
+        )}
+      </div>
+    );
+  }
+
   if (interviewState === "complete") {
     return (
       <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
