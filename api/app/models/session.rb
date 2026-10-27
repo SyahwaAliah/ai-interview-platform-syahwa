@@ -25,9 +25,16 @@ class Session < ApplicationRecord
   def ended?   = status == 'ended'
   def pending? = status == 'pending'
 
+  # The link a candidate opens, so it must point at the web app, not the API host.
+  # Outside production we default to the Vite dev server; in production a missing
+  # APP_BASE_URL raises instead of silently handing candidates a dead link.
   def invite_url
-    base = ENV.fetch('APP_BASE_URL', 'http://localhost:3001')
-    "#{base}/interview/#{invite_token}"
+    base = ENV.fetch('APP_BASE_URL') do
+      raise KeyError, 'APP_BASE_URL is required in production' if Rails.env.production?
+
+      'http://localhost:5173'
+    end
+    "#{base.chomp('/')}/interview/#{invite_token}"
   end
 
   private
