@@ -23,7 +23,7 @@ class FakeWebSocket {
 
 function setup() {
     const onStateChange = vi.fn();
-    const onFatalError = vi.fn(); // BARU
+    const onFatalError = vi.fn();
     const { result } = renderHook(() =>
         useAudioWebSocket({
             sessionId: 1,
@@ -32,14 +32,14 @@ function setup() {
             onTranscript: vi.fn(),
             onStateChange,
             onSpeakerChange: vi.fn(),
-            onFatalError, // BARU
+            onFatalError,
         })
     );
     act(() => result.current.connect());
     const ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
     const receive = (msg: object) =>
         act(() => ws.onmessage?.({ data: JSON.stringify(msg) }));
-    return { onStateChange, onFatalError, receive }; // onFatalError ditambah
+    return { onStateChange, onFatalError, receive };
 }
 
 describe("useAudioWebSocket: session_ended", () => {
@@ -50,18 +50,18 @@ describe("useAudioWebSocket: session_ended", () => {
     afterEach(() => vi.unstubAllGlobals());
 
     it("reports 'failed' when the session ended with an error", () => {
-        const { onStateChange, onFatalError, receive } = setup(); // onFatalError ditambah
+        const { onStateChange, onFatalError, receive } = setup();
         receive({ type: "session_ended", reason: "error" });
         expect(onStateChange).toHaveBeenCalledWith("failed");
         expect(onStateChange).not.toHaveBeenCalledWith("complete");
-        expect(onFatalError).toHaveBeenCalledWith("session_error"); // BARU
+        expect(onFatalError).toHaveBeenCalledWith("session_error");
     });
 
     it("reports 'complete' when the session ended normally", () => {
-        const { onStateChange, onFatalError, receive } = setup(); // onFatalError ditambah
+        const { onStateChange, onFatalError, receive } = setup();
         receive({ type: "session_ended", reason: "completed" });
         expect(onStateChange).toHaveBeenCalledWith("complete");
         expect(onStateChange).not.toHaveBeenCalledWith("failed");
-        expect(onFatalError).not.toHaveBeenCalled(); // BARU
+        expect(onFatalError).not.toHaveBeenCalled();
     });
 });

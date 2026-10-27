@@ -108,7 +108,7 @@ export function useAudioWebSocket({
               } else {
                 onStateChange("complete");
               }
-              break; // perubahan
+              break;
             case "error":
               if (!msg.recoverable) {
                 // Fatal: show the failure, and stop the close handler from reconnecting over it.
