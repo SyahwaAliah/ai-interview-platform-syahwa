@@ -102,8 +102,13 @@ export function useAudioWebSocket({
             case "session_ended":
               sessionEndedRef.current = true;
               reconnectAttemptsRef.current = RECONNECT_DELAYS.length; // suppress reconnect
-              onStateChange(msg.reason === "error" ? "failed" : "complete"); // perubahan
-              break;
+              if (msg.reason === "error") {
+                onFatalError?.("session_error");
+                onStateChange("failed");
+              } else {
+                onStateChange("complete");
+              }
+              break; // perubahan
             case "error":
               if (!msg.recoverable) {
                 // Fatal: show the failure, and stop the close handler from reconnecting over it.
