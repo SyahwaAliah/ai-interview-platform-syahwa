@@ -22,9 +22,13 @@ export interface SpeedThresholds {
     maxPingMs: number;
 }
 
+// A voice interview needs about 0.26 Mbps up (16 kHz mono 16-bit PCM captured) and about
+// 0.38 Mbps down (24 kHz mono 16-bit PCM played). The thresholds leave roughly 4x headroom
+// for protocol overhead and jitter; they should flag a connection too weak for voice, not
+// one that merely lacks video-grade speed.
 export const DEFAULT_THRESHOLDS: SpeedThresholds = {
-    minDownloadMbps: 8,
-    minUploadMbps: 4,
+    minDownloadMbps: 1.5,
+    minUploadMbps: 1,
     maxPingMs: 300,
 };
 
