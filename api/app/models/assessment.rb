@@ -17,7 +17,7 @@ class Assessment < ApplicationRecord
                                  allow_destroy: true,
                                  reject_if: :all_blank
 
-  # validate :skill_labels_must_be_unique
+  validate :skill_labels_must_be_unique
 
   private
 
