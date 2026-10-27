@@ -50,3 +50,18 @@ describe("testInternetSpeed status", () => {
     expect(result.status).toBe("unmeasured");
   });
 });
+
+describe("DEFAULT_THRESHOLDS", () => {
+  // Captured: 16 kHz mono 16-bit PCM (useAudioCapture.ts). Played: 24 kHz mono 16-bit PCM (useAudioPlayback.ts).
+  const audioUploadMbps = (16000 * 16) / 1_000_000;
+  const audioDownloadMbps = (24000 * 16) / 1_000_000;
+
+  it("asks for voice-grade bandwidth with headroom, not video-grade speeds", () => {
+    const upload = DEFAULT_THRESHOLDS.minUploadMbps / audioUploadMbps;
+    const download = DEFAULT_THRESHOLDS.minDownloadMbps / audioDownloadMbps;
+    expect(upload).toBeGreaterThanOrEqual(2);
+    expect(upload).toBeLessThanOrEqual(10);
+    expect(download).toBeGreaterThanOrEqual(2);
+    expect(download).toBeLessThanOrEqual(10);
+  });
+});
