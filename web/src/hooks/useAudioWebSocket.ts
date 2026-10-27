@@ -102,7 +102,7 @@ export function useAudioWebSocket({
             case "session_ended":
               sessionEndedRef.current = true;
               reconnectAttemptsRef.current = RECONNECT_DELAYS.length; // suppress reconnect
-              onStateChange(msg.reason === "error" ? "failed" : "complete"); // perubahan
+              onStateChange("complete"); // perubahan
               break;
             case "error":
               if (!msg.recoverable) {
