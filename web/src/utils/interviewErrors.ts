@@ -21,6 +21,13 @@ export function describeStartFailure(code?: string): StartFailure {
         message: "The hiring team is still setting it up. Please try again later or contact them.",
         canRetry: false,
       };
+    case "session_error":
+      return {
+        title: "Your interview was interrupted",
+        message:
+          "A technical problem on our side ended the session. This is not your fault, and your interview has not been assessed. Please contact the hiring team and ask for a new link.",
+        canRetry: false,
+      };
     case "session_start_failed":
       return {
         title: "We couldn't start your interview",
