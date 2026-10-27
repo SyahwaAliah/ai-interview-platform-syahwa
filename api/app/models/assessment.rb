@@ -16,4 +16,27 @@ class Assessment < ApplicationRecord
   accepts_nested_attributes_for :assessment_skills,
                                  allow_destroy: true,
                                  reject_if: :all_blank
+
+  validate :skill_labels_must_be_unique
+
+  private
+
+  # Skills arrive nested in the same request as the assessment, so a duplicate has no
+  # database row to collide with yet; it would otherwise only surface when a session
+  # starts and the coverage maps are created. Case and surrounding spaces are ignored.
+  def skill_labels_must_be_unique
+    seen = {}
+    duplicates = []
+    assessment_skills.reject(&:marked_for_destruction?).each do |skill|
+      label = skill.skill_label.to_s.strip
+      next if label.empty?
+
+      key = label.downcase
+      duplicates << label if seen[key] && duplicates.none? { |d| d.downcase == key }
+      seen[key] = true
+    end
+    return if duplicates.empty?
+
+    errors.add(:base, "Each skill can only be added once: #{duplicates.join(', ')}")
+  end
 end
