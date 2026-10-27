@@ -24,13 +24,13 @@ export function describeStartFailure(code?: string): StartFailure {
     case "session_start_failed":
       return {
         title: "We couldn't start your interview",
-        message: "Something went wrong on our side and nothing was recorded. Please try again.",
+        message: "Something went wrong on our side. Please try again.",
         canRetry: true,
       };
     default:
       return {
         title: "We couldn't start your interview",
-        message: "Please check your connection and try again. Nothing was recorded.",
+        message: "Please check your connection and try again.",
         canRetry: true,
       };
   }
