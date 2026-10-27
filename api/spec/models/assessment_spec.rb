@@ -3,6 +3,8 @@
 require 'rails_helper'
 
 RSpec.describe Assessment, 'skill uniqueness' do
+  around { |example| Current.using(tenant_id: 1) { example.run } }
+
   def skill(label, order)
     { skill_label: label, display_order: order,
       l1_anchor: 'a', l2_anchor: 'b', l3_anchor: 'c', l4_anchor: 'd', l5_anchor: 'e' }
