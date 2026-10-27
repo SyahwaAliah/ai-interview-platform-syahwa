@@ -1,10 +1,16 @@
 // Internet Speed Test Utilities — standalone, no backend dependency
 
+export type CheckStatus = "ok" | "slow" | "unmeasured";
+export type ReadinessStatus = "pass" | "warn" | "unmeasured";
+
 export interface InternetSpeedResult {
     download: number;
     upload: number;
     ping: number;
     passed: boolean;
+    /** "unmeasured" means at least one check could not be measured; it is never reported as a pass. */
+    status: ReadinessStatus;
+    checks: { download: CheckStatus; upload: CheckStatus; ping: CheckStatus };
     downloadTests: number[];
     uploadTests: number[];
     pingTests: number[];
@@ -16,23 +22,27 @@ export interface SpeedThresholds {
     maxPingMs: number;
 }
 
+// A voice interview needs about 0.26 Mbps up (16 kHz mono 16-bit PCM captured) and about
+// 0.38 Mbps down (24 kHz mono 16-bit PCM played). The thresholds leave roughly 4x headroom
+// for protocol overhead and jitter; they should flag a connection too weak for voice, not
+// one that merely lacks video-grade speed.
 export const DEFAULT_THRESHOLDS: SpeedThresholds = {
-    minDownloadMbps: 8,
-    minUploadMbps: 4,
+    minDownloadMbps: 1.5,
+    minUploadMbps: 1,
     maxPingMs: 300,
 };
 
 const SPEED_TEST_PING_URL = import.meta.env.VITE_SPEED_TEST_PING_URL as string | undefined;
 const SPEED_TEST_UPLOAD_URL = import.meta.env.VITE_SPEED_TEST_UPLOAD_URL as string | undefined;
 
-async function measurePing(): Promise<number> {
+async function measurePing(): Promise<number | null> {
     if (SPEED_TEST_PING_URL) {
         try {
             const start = performance.now();
             await fetch(SPEED_TEST_PING_URL, { cache: "no-cache" });
             return performance.now() - start;
         } catch {
-            return 999;
+            return null;
         }
     }
     const testUrls = [
@@ -49,40 +59,34 @@ async function measurePing(): Promise<number> {
             continue;
         }
     }
-    return 999;
+    return null;
 }
 
-async function measureDownloadSpeed(): Promise<number> {
-    const testFiles = [
-        { url: "https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css", size: 0.2 },
-        { url: "https://unpkg.com/react@18/umd/react.development.js", size: 1.2 },
-        { url: "https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js", size: 0.09 },
+async function measureDownloadSpeed(): Promise<number | null> {
+    const testUrls = [
+        "https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css",
+        "https://unpkg.com/react@18/umd/react.development.js",
+        "https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js",
     ];
-    for (const testFile of testFiles) {
+    for (const url of testUrls) {
         try {
             const start = performance.now();
-            const response = await fetch(testFile.url, { cache: "no-cache" });
-            if (response.ok) {
-                await response.blob();
-                const seconds = (performance.now() - start) / 1000;
-                return testFile.size / seconds;
-            }
+            const response = await fetch(url, { cache: "no-cache" });
+            if (!response.ok) continue;
+            const blob = await response.blob();
+            if (blob.size === 0) continue;
+            const seconds = (performance.now() - start) / 1000;
+            if (seconds <= 0) continue;
+            return blob.size / (1024 * 1024) / seconds;
         } catch {
             continue;
         }
     }
-    // Rough fallback
-    try {
-        const start = performance.now();
-        await fetch("https://www.google.com/favicon.ico", { mode: "no-cors", cache: "no-cache" });
-        const duration = (performance.now() - start) / 1000;
-        return duration < 1 ? 2 : duration < 2 ? 1 : 0.5;
-    } catch {
-        return 0;
-    }
+    // Nothing could be measured: report it as such instead of inventing a speed.
+    return null;
 }
 
-async function measureUploadSpeed(): Promise<number> {
+async function measureUploadSpeed(): Promise<number | null> {
     const uploadSizeMB = 0.5;
     const uploadData = new Blob([new ArrayBuffer(uploadSizeMB * 1024 * 1024)], {
         type: "application/octet-stream",
@@ -95,21 +99,24 @@ async function measureUploadSpeed(): Promise<number> {
             const formData = new FormData();
             formData.append("test", uploadData);
             const start = performance.now();
-            await fetch(endpoint, { method: "POST", body: formData });
+            const response = await fetch(endpoint, { method: "POST", body: formData });
+            if (!response.ok) continue;
             const seconds = (performance.now() - start) / 1000;
+            if (seconds <= 0) continue;
             return uploadSizeMB / seconds;
         } catch {
             continue;
         }
     }
-    return 0.5; // conservative fallback
+    return null;
 }
 
-async function runMultipleTests<T>(testFn: () => Promise<T>, count = 3): Promise<T[]> {
-    const results: T[] = [];
+async function runMultipleTests(testFn: () => Promise<number | null>, count = 3): Promise<number[]> {
+    const results: number[] = [];
     for (let i = 0; i < count; i++) {
         try {
-            results.push(await testFn());
+            const value = await testFn();
+            if (value !== null) results.push(value);
             await new Promise((r) => setTimeout(r, 100));
         } catch {
             // skip failed test
@@ -126,6 +133,16 @@ function average(values: number[]): number {
     return trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
 }
 
+function classifyMin(tests: number[], value: number, min: number): CheckStatus {
+    if (tests.length === 0) return "unmeasured";
+    return value >= min ? "ok" : "slow";
+}
+
+function classifyMax(tests: number[], value: number, max: number): CheckStatus {
+    if (tests.length === 0) return "unmeasured";
+    return value <= max ? "ok" : "slow";
+}
+
 export async function testInternetSpeed(
     thresholds: SpeedThresholds = DEFAULT_THRESHOLDS
 ): Promise<InternetSpeedResult> {
@@ -140,21 +157,41 @@ export async function testInternetSpeed(
         const uploadMbps = average(uploadTests) * 8;
         const ping = average(pingTests);
 
-        const passed =
-            downloadMbps >= thresholds.minDownloadMbps &&
-            uploadMbps >= thresholds.minUploadMbps &&
-            ping <= thresholds.maxPingMs;
+        const checks = {
+            download: classifyMin(downloadTests, downloadMbps, thresholds.minDownloadMbps),
+            upload: classifyMin(uploadTests, uploadMbps, thresholds.minUploadMbps),
+            ping: classifyMax(pingTests, ping, thresholds.maxPingMs),
+        };
+        const values = Object.values(checks);
+        const status: ReadinessStatus = values.includes("unmeasured")
+            ? "unmeasured"
+            : values.includes("slow")
+              ? "warn"
+              : "pass";
 
         return {
             download: Math.round(downloadMbps * 100) / 100,
             upload: Math.round(uploadMbps * 100) / 100,
-            ping: Math.round(ping),
-            passed,
+            // 999 is the existing "no measurement" sentinel for the ping field; `checks.ping` carries the truth.
+            ping: pingTests.length === 0 ? 999 : Math.round(ping),
+            passed: status === "pass",
+            status,
+            checks,
             downloadTests: downloadTests.map((v) => Math.round(v * 8 * 100) / 100),
             uploadTests: uploadTests.map((v) => Math.round(v * 8 * 100) / 100),
             pingTests: pingTests.map((v) => Math.round(v)),
         };
     } catch {
-        return { download: 0, upload: 0, ping: 999, passed: false, downloadTests: [], uploadTests: [], pingTests: [] };
+        return {
+            download: 0,
+            upload: 0,
+            ping: 999,
+            passed: false,
+            status: "unmeasured",
+            checks: { download: "unmeasured", upload: "unmeasured", ping: "unmeasured" },
+            downloadTests: [],
+            uploadTests: [],
+            pingTests: [],
+        };
     }
 }

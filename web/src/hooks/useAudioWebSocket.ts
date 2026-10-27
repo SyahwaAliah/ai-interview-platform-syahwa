@@ -10,6 +10,7 @@ interface UseAudioWebSocketOptions {
   onStateChange: (state: InterviewState) => void;
   onSpeakerChange: (speaker: InterviewSpeaker) => void;
   onReconnected?: () => void;
+  onFatalError?: (code?: string) => void;
 }
 
 const RECONNECT_DELAYS = [1000, 2000, 4000];
@@ -22,6 +23,7 @@ export function useAudioWebSocket({
   onStateChange,
   onSpeakerChange,
   onReconnected,
+  onFatalError,
 }: UseAudioWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -100,10 +102,21 @@ export function useAudioWebSocket({
             case "session_ended":
               sessionEndedRef.current = true;
               reconnectAttemptsRef.current = RECONNECT_DELAYS.length; // suppress reconnect
-              onStateChange("complete");
+              if (msg.reason === "error") {
+                onFatalError?.("session_error");
+                onStateChange("failed");
+              } else {
+                onStateChange("complete");
+              }
               break;
             case "error":
-              if (!msg.recoverable) onStateChange("complete");
+              if (!msg.recoverable) {
+                // Fatal: show the failure, and stop the close handler from reconnecting over it.
+                sessionEndedRef.current = true;
+                reconnectAttemptsRef.current = RECONNECT_DELAYS.length;
+                onFatalError?.(msg.code);
+                onStateChange("failed");
+              }
               break;
           }
         } catch {

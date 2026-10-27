@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
-import { testInternetSpeed, DEFAULT_THRESHOLDS, type InternetSpeedResult } from "@/utils/internetSpeedTest";
+import {
+    testInternetSpeed,
+    DEFAULT_THRESHOLDS,
+    type InternetSpeedResult,
+    type CheckStatus,
+    type ReadinessStatus,
+} from "@/utils/internetSpeedTest";
 import {
     ProctoringState,
     type HardwareCheckingProgress,
@@ -9,7 +15,7 @@ import {
     getCurrentTime,
 } from "@/utils/hardwareUtils";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, CheckCircle, XCircle, Loader2, Circle } from "lucide-react";
+import { RefreshCw, CheckCircle, XCircle, Loader2, Circle, TriangleAlert } from "lucide-react";
 
 interface HardwareCheckProps {
     onStart?: () => void;
@@ -32,6 +38,29 @@ function stateLabel(state: ProctoringState) {
     return "Waiting";
 }
 
+const INTERNET_NOTICE: Record<Exclude<ReadinessStatus, "pass">, { label: string; message: string }> = {
+    warn: {
+        label: "Slow",
+        message:
+            "Your connection looks slower than we expect for a voice interview. You can still continue, but the audio may cut out. Moving closer to your router or switching networks may help.",
+    },
+    unmeasured: {
+        label: "Not measured",
+        message:
+            "We couldn't measure your connection. This does not mean it is bad. You can continue, and if the audio cuts out during the interview, check your connection.",
+    },
+};
+
+function Metric({ prefix, value, unit, status }: { prefix: string; value: number; unit: string; status: CheckStatus }) {
+    const color =
+        status === "ok" ? "text-green-600" : status === "slow" ? "text-amber-600" : "text-muted-foreground";
+    return (
+        <span className={color}>
+            {prefix} {status === "unmeasured" ? "not measured" : `${value} ${unit}`}
+        </span>
+    );
+}
+
 const REQUIRE_CAMERA = import.meta.env.VITE_REQUIRE_CAMERA === "true";
 
 const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
@@ -44,6 +73,7 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
     });
     const [allPassed, setAllPassed] = useState(false);
     const [internetResult, setInternetResult] = useState<InternetSpeedResult | null>(null);
+    const [acknowledged, setAcknowledged] = useState(false);
     const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
     const [audioLevel, setAudioLevel] = useState<number>(0);
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -118,18 +148,19 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
     }, []);
 
     // Step 2: Internet
+    // `progress.internet` only means "the check has finished". The verdict (pass / slow /
+    // not measured) lives in `internetResult.status`, so a slow or unmeasurable connection
+    // no longer blocks the microphone and audio checks.
     useEffect(() => {
         if (progress.internet !== ProctoringState.LOADING) return;
         testInternetSpeed(DEFAULT_THRESHOLDS).then((result) => {
             setInternetResult(result);
             setProgress((p) => ({
                 ...p,
-                internet: result.passed ? ProctoringState.PASSED : ProctoringState.ERROR,
-                ...(result.passed
-                    ? REQUIRE_CAMERA
-                        ? { camera: ProctoringState.LOADING }
-                        : { camera: ProctoringState.PASSED, microphone: ProctoringState.LOADING }
-                    : {}),
+                internet: ProctoringState.PASSED,
+                ...(REQUIRE_CAMERA
+                    ? { camera: ProctoringState.LOADING }
+                    : { camera: ProctoringState.PASSED, microphone: ProctoringState.LOADING }),
             }));
         });
     }, [progress.internet]);
@@ -175,20 +206,20 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
         });
     }, [progress.audio]);
 
+    // Retry restarts from the internet check. OS & browser info is static, so it is not re-run.
     const retryAll = () => {
         videoStream?.getTracks().forEach((t) => t.stop());
         setVideoStream(null);
         setInternetResult(null);
+        setAcknowledged(false);
         setProgress({
-            osAndBrowser: ProctoringState.LOADING,
-            internet: ProctoringState.WAITING,
+            osAndBrowser: ProctoringState.PASSED,
+            internet: ProctoringState.LOADING,
             camera: ProctoringState.WAITING,
             audio: ProctoringState.WAITING,
             microphone: ProctoringState.WAITING,
         });
     };
-
-    const thresholds = DEFAULT_THRESHOLDS;
 
     const rows: { key: keyof HardwareCheckingProgress; label: string }[] = [
         { key: "osAndBrowser", label: "OS & browser" },
@@ -199,6 +230,11 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
     ];
 
     const hasError = Object.values(progress).some((s) => s === ProctoringState.ERROR);
+    const internetStatus = internetResult?.status ?? null;
+    const internetNeedsAck = internetStatus !== null && internetStatus !== "pass";
+    const canStart = allPassed && (!internetNeedsAck || acknowledged);
+    const internetNotice =
+        internetStatus !== null && internetStatus !== "pass" ? INTERNET_NOTICE[internetStatus] : null;
 
     return (
         <div className="rounded-lg border bg-card overflow-hidden">
@@ -224,55 +260,80 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
 
             {/* Checklist */}
             <div className="divide-y">
-                {rows.map(({ key, label }) => (
-                    <div key={key} className="px-4 py-3">
-                        <div className="flex items-center justify-between">
-                            <span className="text-sm font-medium">{label}</span>
-                            <div className="flex items-center gap-2">
-                                <StateIcon state={progress[key]} />
-                                <span className={`text-xs w-16 text-right ${progress[key] === ProctoringState.PASSED ? "text-green-600" :
-                                    progress[key] === ProctoringState.ERROR ? "text-destructive" :
-                                        "text-muted-foreground"
-                                    }`}>
-                                    {stateLabel(progress[key])}
-                                </span>
-                            </div>
-                        </div>
-
-                        {/* Internet speed details */}
-                        {key === "internet" && internetResult && (
-                            <div className="mt-2 flex gap-3 text-xs">
-                                <span className={internetResult.download >= thresholds.minDownloadMbps ? "text-green-600" : "text-destructive"}>
-                                    ↓ {internetResult.download} Mbps
-                                </span>
-                                <span className={internetResult.upload >= thresholds.minUploadMbps ? "text-green-600" : "text-destructive"}>
-                                    ↑ {internetResult.upload} Mbps
-                                </span>
-                                <span className={internetResult.ping <= thresholds.maxPingMs ? "text-green-600" : "text-destructive"}>
-                                    {internetResult.ping} ms
-                                </span>
-                            </div>
-                        )}
-
-                        {/* Mic level bar */}
-                        {key === "microphone" && progress.microphone === ProctoringState.PASSED && (
-                            <div className="mt-2 flex items-center gap-2">
-                                <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
-                                    <div
-                                        className="h-full bg-green-500 transition-all duration-150"
-                                        style={{ width: `${Math.min(audioLevel * 2, 100)}%` }}
-                                    />
+                {rows.map(({ key, label }) => {
+                    const notice =
+                        key === "internet" && progress.internet === ProctoringState.PASSED
+                            ? internetNotice
+                            : null;
+                    return (
+                        <div key={key} className="px-4 py-3">
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm font-medium">{label}</span>
+                                <div className="flex items-center gap-2">
+                                    {notice ? (
+                                        <TriangleAlert className="h-4 w-4 text-amber-500" />
+                                    ) : (
+                                        <StateIcon state={progress[key]} />
+                                    )}
+                                    <span className={`text-xs min-w-16 text-right ${notice ? "text-amber-600" :
+                                        progress[key] === ProctoringState.PASSED ? "text-green-600" :
+                                        progress[key] === ProctoringState.ERROR ? "text-destructive" :
+                                            "text-muted-foreground"
+                                        }`}>
+                                        {notice ? notice.label : stateLabel(progress[key])}
+                                    </span>
                                 </div>
-                                <span className="text-xs text-muted-foreground w-8 text-right">{audioLevel}</span>
                             </div>
-                        )}
-                    </div>
-                ))}
+
+                            {/* Internet speed details */}
+                            {key === "internet" && internetResult && (
+                                <div className="mt-2 space-y-2">
+                                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                                        <Metric prefix="↓" value={internetResult.download} unit="Mbps" status={internetResult.checks.download} />
+                                        <Metric prefix="↑" value={internetResult.upload} unit="Mbps" status={internetResult.checks.upload} />
+                                        <Metric prefix="" value={internetResult.ping} unit="ms" status={internetResult.checks.ping} />
+                                    </div>
+                                    {notice && (
+                                        <p role="status" className="text-xs text-muted-foreground leading-relaxed">
+                                            {notice.message}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Mic level bar */}
+                            {key === "microphone" && progress.microphone === ProctoringState.PASSED && (
+                                <div className="mt-2 flex items-center gap-2">
+                                    <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
+                                        <div
+                                            className="h-full bg-green-500 transition-all duration-150"
+                                            style={{ width: `${Math.min(audioLevel * 2, 100)}%` }}
+                                        />
+                                    </div>
+                                    <span className="text-xs text-muted-foreground w-8 text-right">{audioLevel}</span>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
+
+            {/* Acknowledgement when the connection is slow or could not be measured */}
+            {internetNeedsAck && (
+                <label className="flex items-start gap-2 px-4 py-3 border-t text-xs cursor-pointer">
+                    <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={acknowledged}
+                        onChange={(e) => setAcknowledged(e.target.checked)}
+                    />
+                    <span>I understand my connection may affect the interview and I want to continue.</span>
+                </label>
+            )}
 
             {/* Footer */}
             <div className="px-4 py-3 border-t flex items-center justify-between gap-3 bg-muted/30">
-                {hasError && (
+                {(hasError || internetNeedsAck) && (
                     <Button variant="outline" size="sm" onClick={retryAll}>
                         <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
                         Retry
@@ -281,7 +342,7 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
                 <Button
                     size="sm"
                     className="ml-auto"
-                    disabled={!allPassed}
+                    disabled={!canStart}
                     onClick={onStart}
                 >
                     Start Interview

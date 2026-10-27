@@ -111,7 +111,16 @@ class AudioWebSocketMiddleware
       return
     end
 
-    Sessions::StartHandler.new(session).call unless session.active?
+    begin
+      Sessions::StartHandler.new(session).call unless session.active?
+    rescue StandardError => e
+      # Log the class only; messages can carry SQL with candidate data.
+      Rails.logger.error("[AudioWS] Session #{session.id} failed to start: #{e.class}")
+      send_json(browser_ws, type: 'error', code: 'session_start_failed',
+                            message: 'The interview could not be started.', recoverable: false)
+      browser_ws.close
+      return
+    end
 
     state.turn_counter = session.transcript_turns.maximum(:turn_number).to_i
 
